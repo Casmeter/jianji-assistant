@@ -1,3 +1,4 @@
+/* 快速切片小工具 */
 const $ = (id) => document.getElementById(id);
 const VIDEO = new Set(["mp4", "mov", "mkv", "avi", "webm", "m4v"]);
 
