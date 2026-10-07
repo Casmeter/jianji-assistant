@@ -9,6 +9,8 @@ let inPoint = null;
 let outPoint = null;
 let saveTimer = 0;
 let resumeHandle = null;
+let ffmpeg = null;
+let cutting = false;
 
 const episodesEl = $("episodes");
 const scriptEl = $("script");
@@ -23,6 +25,7 @@ function boot() {
   $("dir-input").onchange = () => takeFiles($("dir-input").files, directoryTitle($("dir-input").files));
   $("file-input").onchange = () => takeFiles($("file-input").files, fileTitle($("file-input").files));
   $("export-table").onclick = exportTable;
+  $("export-clips").onclick = exportClips;
   $("export-subs").onclick = exportSubs;
   $("set-in").onclick = () => setPoint("in");
   $("set-out").onclick = () => setPoint("out");
@@ -134,6 +137,7 @@ function render() {
   const ready = Boolean(project);
   $("gate").hidden = ready;
   $("export-table").disabled = !ready;
+  $("export-clips").disabled = !ready || cutting;
   $("export-subs").disabled = !ready;
   $("composer").hidden = !ready;
   $("workspace").textContent = ready ? project.title : "还没有原片";
@@ -431,6 +435,153 @@ function onDrop(event) {
   scheduleSave();
 }
 
+async function exportClips() {
+  if (!project || cutting) return;
+  const jobs = [];
+  project.lines.forEach((line, index) => {
+    const episode = project.episodes.find((item) => item.id === line.episodeId && item.file);
+    if (!episode || line.start == null || line.end == null || line.end <= line.start) return;
+    jobs.push({ line, index, episode });
+  });
+  if (!jobs.length) {
+    setStatus("先给要切的段标好入点和出点。");
+    return;
+  }
+  cutting = true;
+  $("export-clips").disabled = true;
+  try {
+    const engine = await ensureFfmpeg();
+    const groups = new Map();
+    jobs.forEach((job) => {
+      if (!groups.has(job.episode.id)) groups.set(job.episode.id, []);
+      groups.get(job.episode.id).push(job);
+    });
+    const clips = [];
+    let failed = 0;
+    for (const group of groups.values()) {
+      const episode = group[0].episode;
+      setStatus(`正在读取 ${episode.name}。视频只在这台浏览器里处理，不会上传。`);
+      engine.FS("writeFile", "input.mp4", new Uint8Array(await episode.file.arrayBuffer()));
+      for (const job of group) {
+        setStatus(`正在切第 ${pad(job.index + 1)} 段，共 ${jobs.length} 段。`);
+        const duration = (job.line.end - job.line.start).toFixed(3);
+        try {
+          await engine.run(
+            "-ss", Number(job.line.start).toFixed(3),
+            "-i", "input.mp4",
+            "-t", duration,
+            "-c", "copy",
+            "-avoid_negative_ts", "make_zero",
+            "output.mp4"
+          );
+          const raw = engine.FS("readFile", "output.mp4");
+          const data = new Uint8Array(raw);
+          engine.FS("unlink", "output.mp4");
+          if (data.length < 32) {
+            failed += 1;
+            continue;
+          }
+          clips.push({ name: `${pad(job.index + 1)}.mp4`, data });
+        } catch (error) {
+          failed += 1;
+          try { engine.FS("unlink", "output.mp4"); } catch (ignore) { /* 没有输出文件 */ }
+        }
+      }
+      try { engine.FS("unlink", "input.mp4"); } catch (ignore) { /* 原片临时文件已清 */ }
+    }
+    if (!clips.length) {
+      setStatus("没有切出来。尽量用 mp4，并把片段稍稍拉长。");
+      return;
+    }
+    const saved = await saveClips(clips);
+    const miss = failed ? `有 ${failed} 段没切成。` : "";
+    if (saved === "cancel") setStatus("没有选择保存位置。");
+    else if (saved === "folder") setStatus(`已保存 ${clips.length} 段切片。${miss}`);
+    else setStatus(`已开始下载 ${clips.length} 段切片。${miss}`);
+  } catch (error) {
+    setStatus("切片没有完成。刷新页面后再试一次。");
+  } finally {
+    cutting = false;
+    if (project) $("export-clips").disabled = false;
+  }
+}
+
+async function ensureFfmpeg() {
+  if (ffmpeg) return ffmpeg;
+  if (!window.FFmpeg || !window.FFmpeg.createFFmpeg) throw new Error("ffmpeg missing");
+  const script = document.querySelector("script[src*='app.js']");
+  const corePath = new URL("vendor/ffmpeg/ffmpeg-core.js", script.src).href;
+  ffmpeg = window.FFmpeg.createFFmpeg({ log: false, corePath, mainName: "main" });
+  setStatus("第一次切片要先准备工具，请稍等。");
+  await ffmpeg.load();
+  return ffmpeg;
+}
+
+async function saveClips(clips) {
+  if (window.showDirectoryPicker) {
+    try {
+      const dir = await window.showDirectoryPicker({ mode: "readwrite" });
+      for (const clip of clips) {
+        const handle = await dir.getFileHandle(clip.name, { create: true });
+        const writable = await handle.createWritable();
+        await writable.write(new Blob([clip.data], { type: "video/mp4" }));
+        await writable.close();
+      }
+      return "folder";
+    } catch (error) {
+      if (error && error.name === "AbortError") return "cancel";
+    }
+  }
+  downloadBlob("切片.zip", zipStore(clips));
+  return "zip";
+}
+
+function zipStore(files) {
+  const locals = [];
+  const central = [];
+  let offset = 0;
+  files.forEach((file) => {
+    const nameBytes = new TextEncoder().encode(file.name);
+    const crc = crc32(file.data);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, file.data.length, true);
+    local.setUint32(22, file.data.length, true);
+    local.setUint16(26, nameBytes.length, true);
+    locals.push(new Uint8Array(local.buffer), nameBytes, file.data);
+    const head = new DataView(new ArrayBuffer(46));
+    head.setUint32(0, 0x02014b50, true);
+    head.setUint16(4, 20, true);
+    head.setUint16(6, 20, true);
+    head.setUint32(16, crc, true);
+    head.setUint32(20, file.data.length, true);
+    head.setUint32(24, file.data.length, true);
+    head.setUint16(28, nameBytes.length, true);
+    head.setUint32(42, offset, true);
+    central.push(new Uint8Array(head.buffer), nameBytes);
+    offset += 30 + nameBytes.length + file.data.length;
+  });
+  const centralSize = central.reduce((sum, part) => sum + part.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, files.length, true);
+  end.setUint16(10, files.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...locals, ...central, new Uint8Array(end.buffer)], { type: "application/zip" });
+}
+
+function crc32(data) {
+  let value = ~0;
+  for (let index = 0; index < data.length; index += 1) {
+    value ^= data[index];
+    for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+  }
+  return ~value >>> 0;
+}
+
 function exportTable() {
   if (!project) return;
   download("切片清单.csv", "text/csv;charset=utf-8", `\uFEFF${tableCsv(project)}`);
@@ -530,7 +681,11 @@ function assClock(seconds) {
 }
 
 function download(name, type, text) {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+  downloadBlob(name, new Blob([text], { type }));
+}
+
+function downloadBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = name;

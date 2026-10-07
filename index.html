@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="快速切片小工具" />
   <title>剪辑助手席</title>
-  <link rel="stylesheet" href="app.css?v=2" />
+  <link rel="stylesheet" href="app.css?v=3" />
 </head>
 <body>
   <div class="app">
@@ -30,7 +30,8 @@
         <div class="top-actions">
           <button type="button" id="open-folder">选择文件夹</button>
           <button type="button" id="open-file">选择视频</button>
-          <button type="button" id="export-table" class="primary" disabled>下载切片清单</button>
+          <button type="button" id="export-table" disabled>下载切片清单</button>
+          <button type="button" id="export-clips" class="primary" disabled title="在浏览器里切好再下载，视频不会上传">下载切片</button>
         </div>
       </div>
     </header>
@@ -47,18 +48,14 @@
     <div class="desk-wrap">
       <div class="gate" id="gate">
         <div class="gate-card">
-          <h2>把解说要配的画面理成切片</h2>
-          <p>这不是字幕打轴工具。写下这句口播，或者什么都不写，标好入点和出点。中间的顺序就是切片顺序。需要字幕时再另存，不写字也能拿来切片。视频只在这台浏览器里播放，不会上传。清单交给剪映下刀。</p>
+          <h2>快速整理解说类视频素材和制作切片</h2>
+          <p>注意！这不是字幕打轴工具，而是帮助你制作解说吐槽类视频或者快速把大块视频切片。</p>
+          <p>首先创建一个配字块或者不写配字，然后标记片段的出入点，贴到配字块上，<br>最后下载。</p>
           <div class="gate-actions">
             <button type="button" id="gate-folder" class="primary">选择文件夹</button>
             <button type="button" id="gate-file">选择视频</button>
             <button type="button" id="resume" hidden>继续上次的文件夹</button>
           </div>
-          <ol class="steps">
-            <li><span>01</span>写下口播，或留空</li>
-            <li><span>02</span>标出入点</li>
-            <li><span>03</span>导出切片清单</li>
-          </ol>
           <p id="gate-note" class="gate-note"></p>
         </div>
       </div>
@@ -135,6 +132,7 @@
   </div>
   <input id="dir-input" type="file" webkitdirectory multiple hidden />
   <input id="file-input" type="file" accept=".mp4,.mov,.mkv,.webm,.avi,.m4v,video/*" multiple hidden />
-  <script src="app.js?v=2"></script>
+  <script src="vendor/ffmpeg/ffmpeg.min.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

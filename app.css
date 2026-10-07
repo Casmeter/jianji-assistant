@@ -217,11 +217,12 @@ kbd {
 }
 
 .gate-card h2 {
-  margin: 0 0 8px;
+  margin: 0 0 12px;
   font-family: var(--display);
-  font-size: 32px;
+  font-size: 30px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  line-height: 1.25;
 }
 
 .gate-card p {
@@ -229,6 +230,8 @@ kbd {
   color: var(--muted);
   max-width: 46em;
 }
+
+.gate-card p + p { margin-top: 10px; }
 
 .gate-actions {
   display: flex;
