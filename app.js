@@ -49,13 +49,9 @@ function boot() {
       addLine();
     }
   };
-  player.ontimeupdate = () => {
-    const clock = formatClock(player.currentTime || 0);
-    $("clock").textContent = clock;
-    $("theater-clock").textContent = clock;
-  };
+  player.ontimeupdate = () => showClock(player.currentTime || 0);
   player.onerror = () => setStatus("这个格式在页面里放不了。可以手填时间码，下载切片清单后交给剪映。");
-  document.addEventListener("keydown", onKey);
+  document.addEventListener("keydown", onKey, true);
   episodesEl.addEventListener("click", onEpisodeClick);
   scriptEl.addEventListener("click", onScriptClick);
   scriptEl.addEventListener("input", onScriptInput);
@@ -448,10 +444,112 @@ function syncAttach() {
   $("unlock-all").disabled = empty;
 }
 
+let frameDeck = null;
+let frameRequest = null;
+let pendingSteps = 0;
+let stepping = false;
+
 function onKey(event) {
-  if (event.target.matches("textarea, input")) return;
+  if (event.target.closest && event.target.closest("textarea, input")) return;
+  if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && document.fullscreenElement) {
+    event.preventDefault();
+    event.stopPropagation();
+    queueFrameStep(event.key === "ArrowRight" ? 1 : -1);
+    return;
+  }
   if (event.key === "i" || event.key === "I") setPoint("in");
   if (event.key === "o" || event.key === "O") setPoint("out");
+}
+
+function queueFrameStep(direction) {
+  if (!player.src) {
+    setStatus("先从左边点开一集。");
+    return;
+  }
+  pendingSteps = clamp(pendingSteps + direction, -48, 48);
+  if (!stepping) runFrameSteps();
+}
+
+async function runFrameSteps() {
+  stepping = true;
+  try {
+    while (pendingSteps !== 0) {
+      const direction = pendingSteps > 0 ? 1 : -1;
+      pendingSteps -= direction;
+      await stepOneFrame(direction);
+    }
+  } catch (error) {
+    pendingSteps = 0;
+    setStatus("这一帧没有挪动。");
+  } finally {
+    stepping = false;
+    if (pendingSteps !== 0) runFrameSteps();
+  }
+}
+
+async function stepOneFrame(direction) {
+  const episode = project && project.episodes.find((item) => item.id === playerEpisode);
+  if (!episode) return;
+  player.pause();
+  const deck = await frameDeckFor(episode);
+  const duration = Number.isFinite(player.duration) ? player.duration : 0;
+  let time = player.currentTime || 0;
+  if (deck && deck.sink) {
+    const packet = await deck.sink.getPacket(time + 0.0002, { metadataOnly: true });
+    if (packet) {
+      if (direction > 0) {
+        const next = await deck.sink.getPacket(packet.timestamp + (packet.duration || 1 / 30), { metadataOnly: true });
+        if (next && next.timestamp > packet.timestamp + 0.00005) time = next.timestamp;
+      } else if (packet.timestamp > 0) {
+        const previous = await deck.sink.getPacket(packet.timestamp - 0.0001, { metadataOnly: true });
+        time = previous ? previous.timestamp : 0;
+      } else {
+        time = 0;
+      }
+    } else {
+      time = direction > 0 ? time + 1 / 30 : Math.max(0, time - 1 / 30);
+    }
+  } else {
+    time += direction / 30;
+  }
+  const landed = duration > 0 ? clamp(time, 0, Math.max(0, duration - 0.001)) : Math.max(0, time);
+  player.currentTime = landed;
+  showClock(landed);
+}
+
+async function frameDeckFor(episode) {
+  if (frameDeck && frameDeck.id === episode.id) return frameDeck;
+  if (!frameRequest || frameRequest.id !== episode.id) {
+    const id = episode.id;
+    const file = episode.file;
+    frameRequest = { id, promise: openFrameDeck(id, file) };
+  }
+  const deck = await frameRequest.promise;
+  if (!frameRequest || frameRequest.id !== episode.id) return deck;
+  if (frameDeck && frameDeck.input && frameDeck.id !== deck.id) frameDeck.input.dispose();
+  frameDeck = deck;
+  return deck;
+}
+
+async function openFrameDeck(id, file) {
+  try {
+    const kit = await loadMediaKit();
+    const input = new kit.Input({ source: new kit.BlobSource(file), formats: kit.ALL_FORMATS });
+    const track = await input.getPrimaryVideoTrack();
+    if (!track) {
+      input.dispose();
+      return { id, sink: null, input: null };
+    }
+    return { id, sink: new kit.EncodedPacketSink(track), input };
+  } catch (error) {
+    return { id, sink: null, input: null };
+  }
+}
+
+function showClock(time) {
+  const clock = formatClock(time);
+  $("clock").textContent = clock;
+  $("theater-clock").textContent = clock;
 }
 
 function onDragStart(event) {
