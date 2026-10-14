@@ -33,6 +33,8 @@ function boot() {
   $("fs-out").onclick = () => setPoint("out");
   $("attach").onclick = attach;
   $("fs-attach").onclick = attach;
+  $("lock-all").onclick = () => setAllLocks(true);
+  $("unlock-all").onclick = () => setAllLocks(false);
   $("go-full").onclick = enterFull;
   $("exit-full").onclick = () => document.exitFullscreen();
   $("in-point").onchange = () => readPoint("in");
@@ -145,6 +147,7 @@ function render() {
   renderScript();
   renderAxis();
   renderPoints();
+  syncAttach();
 }
 
 function renderEpisodes() {
@@ -172,29 +175,35 @@ function renderScript() {
   $("line-count").textContent = project ? String(project.lines.length) : "0";
   if (!project) {
     scriptEl.innerHTML = '<p class="empty">这里的顺序就是切片顺序。不写字也能加一段。勾选「只作备忘」的不会进可选字幕。</p>';
+    syncAttach();
     return;
   }
   if (!project.lines.length) {
     scriptEl.innerHTML = '<p class="empty">写下第一句口播，或留空只加一段切片。上面是 01，下面接着 02。</p>';
+    syncAttach();
     return;
   }
   scriptEl.innerHTML = project.lines.map((line, index) => {
     const on = line.id === selectedLine ? " selected" : "";
     const memo = line.memo ? " memo" : "";
-    return `<li class="row${on}${memo}" data-id="${line.id}" draggable="true">
+    const locked = line.locked ? " locked" : "";
+    const tag = on && !line.locked ? '<span class="paste-tag">贴这里</span>' : "";
+    return `<li class="row${on}${memo}${locked}" data-id="${line.id}" draggable="${line.locked ? "false" : "true"}">
       <span class="num">${pad(index + 1)}</span>
+      <button type="button" class="lock" data-act="lock" aria-pressed="${line.locked ? "true" : "false"}" title="${line.locked ? "已上锁，点此解锁" : "上锁，防止贴错或覆盖"}">${line.locked ? "🔒" : "🔓"}</button>
       <div class="row-body">
-        <textarea class="line-text" rows="2" placeholder="无字切片，只标出入点">${escapeHtml(line.text)}</textarea>
-        <p class="${line.episodeId ? "meta ok" : "meta"}">${clipLabel(line)}</p>
-        <label class="memo-toggle"><input type="checkbox" data-act="memo"${line.memo ? " checked" : ""} /> 只作备忘</label>
+        <textarea class="line-text" rows="2" placeholder="无字切片，只标出入点"${line.locked ? " readonly" : ""}>${escapeHtml(line.text)}</textarea>
+        <p class="${line.episodeId ? "meta ok" : "meta"}">${tag}${clipLabel(line)}</p>
+        <label class="memo-toggle"><input type="checkbox" data-act="memo"${line.memo ? " checked" : ""}${line.locked ? " disabled" : ""} /> 只作备忘</label>
         <div class="row-actions">
-          <button type="button" data-act="up">上移</button>
-          <button type="button" data-act="down">下移</button>
-          <button type="button" data-act="del">删除</button>
+          <button type="button" data-act="up"${line.locked ? " disabled" : ""}>上移</button>
+          <button type="button" data-act="down"${line.locked ? " disabled" : ""}>下移</button>
+          <button type="button" data-act="del"${line.locked ? " disabled" : ""}>删除</button>
         </div>
       </div>
     </li>`;
   }).join("");
+  syncAttach();
 }
 
 function renderAxis() {
@@ -209,7 +218,9 @@ function renderAxis() {
   track.innerHTML = blocks.map((block) => {
     const selected = block.line.id === selectedLine ? " selected" : "";
     const memo = block.line.memo ? " memo" : "";
-    return `<button type="button" class="axis-block${memo}${selected}" data-id="${block.line.id}" style="flex-grow:${Math.max(block.duration, 0.4)}" title="${formatClock(block.start)}–${formatClock(block.end)}">${pad(block.index)}</button>`;
+    const locked = block.line.locked ? " locked" : "";
+    const lockNote = block.line.locked ? " 已上锁" : "";
+    return `<button type="button" class="axis-block${memo}${selected}${locked}" data-id="${block.line.id}" style="flex-grow:${Math.max(block.duration, 0.4)}" title="${formatClock(block.start)}–${formatClock(block.end)}${lockNote}">${pad(block.index)}</button>`;
   }).join("");
   const spare = missing ? ` ${missing} 段还没贴画面。` : "";
   $("axis-note").textContent = `切片总长 ${formatClock(total)}。这是切片顺序，不是字幕轴。空心的是备忘。${spare}`;
@@ -266,6 +277,20 @@ function onScriptClick(event) {
   if (!row || !project) return;
   const id = row.dataset.id;
   const act = event.target.dataset.act;
+  const line = project.lines.find((item) => item.id === id);
+  if (!line) return;
+  if (act === "lock") {
+    line.locked = !line.locked;
+    renderScript();
+    renderAxis();
+    scheduleSave();
+    setStatus(line.locked ? `第 ${pad(lineNo(id))} 段已上锁，贴画面不会改到它。` : `第 ${pad(lineNo(id))} 段已解锁。`);
+    return;
+  }
+  if (line.locked) {
+    setStatus(`第 ${pad(lineNo(id))} 段已上锁。`);
+    return;
+  }
   if (act === "up" || act === "down") {
     move(project.lines, id, act === "up" ? -1 : 1);
     selectedLine = id;
@@ -275,18 +300,17 @@ function onScriptClick(event) {
     return;
   }
   if (act === "memo") {
-    const line = project.lines.find((item) => item.id === id);
-    if (!line) return;
     line.memo = event.target.checked;
     row.classList.toggle("memo", line.memo);
     selectedLine = id;
     markSelected(scriptEl, id);
     renderAxis();
+    syncAttach();
     scheduleSave();
     return;
   }
   if (act === "del") {
-    project.lines = project.lines.filter((line) => line.id !== id);
+    project.lines = project.lines.filter((item) => item.id !== id);
     if (selectedLine === id) selectedLine = project.lines[0] ? project.lines[0].id : null;
     renderScript();
     renderAxis();
@@ -299,10 +323,16 @@ function onScriptClick(event) {
 function onAxisClick(event) {
   const block = event.target.closest(".axis-block");
   if (!block || !project) return;
+  const line = project.lines.find((item) => item.id === block.dataset.id);
+  if (line && line.locked) {
+    setStatus(`第 ${pad(lineNo(line.id))} 段已上锁。`);
+    return;
+  }
   chooseLine(block.dataset.id, false);
 }
 
 function chooseLine(id, keepFocus) {
+  const same = selectedLine === id;
   selectedLine = id;
   const line = project.lines.find((item) => item.id === id);
   if (line && line.episodeId) {
@@ -311,20 +341,19 @@ function chooseLine(id, keepFocus) {
     playEpisode(line.episodeId, line.start || 0);
     renderPoints();
   }
-  if (keepFocus) {
-    markSelected(scriptEl, id);
-    renderAxis();
-    return;
-  }
+  if (keepFocus && same) return;
   renderScript();
   renderAxis();
+  if (!keepFocus) return;
+  const area = scriptEl.querySelector(`[data-id="${id}"] .line-text`);
+  if (area) area.focus();
 }
 
 function onScriptInput(event) {
   if (!event.target.classList.contains("line-text") || !project) return;
   const row = event.target.closest(".row");
   const line = project.lines.find((item) => item.id === row.dataset.id);
-  if (!line) return;
+  if (!line || line.locked) return;
   line.text = event.target.value;
   scheduleSave();
 }
@@ -335,7 +364,7 @@ function addLine() {
     return;
   }
   const text = $("draft").value.trim();
-  const line = { id: uid(), text, memo: false, episodeId: null, start: null, end: null };
+  const line = { id: uid(), text, memo: false, locked: false, episodeId: null, start: null, end: null };
   project.lines.push(line);
   selectedLine = line.id;
   $("draft").value = "";
@@ -376,6 +405,12 @@ function attach() {
     return;
   }
   const line = project.lines.find((item) => item.id === selectedLine);
+  const index = project.lines.findIndex((item) => item.id === selectedLine) + 1;
+  if (!line || line.locked) {
+    setStatus(`第 ${pad(index)} 段已上锁，不会覆盖。`);
+    return;
+  }
+  const replaced = line.episodeId && line.start != null && line.end != null;
   line.episodeId = playerEpisode;
   line.start = round(inPoint);
   line.end = round(outPoint);
@@ -383,9 +418,34 @@ function attach() {
   renderAxis();
   scheduleSave();
   const block = timeline(project).blocks.find((item) => item.line.id === line.id);
-  const index = project.lines.findIndex((item) => item.id === selectedLine) + 1;
   const placed = block ? `切片顺序 ${formatClock(block.start)}–${formatClock(block.end)}` : "";
-  setStatus(`第 ${pad(index)} 段已贴上画面。${placed}`);
+  setStatus(replaced ? `第 ${pad(index)} 段原来的画面已换掉。${placed}` : `第 ${pad(index)} 段已贴上画面。${placed}`);
+}
+
+function setAllLocks(locked) {
+  if (!project || !project.lines.length) return;
+  project.lines.forEach((line) => { line.locked = locked; });
+  renderScript();
+  renderAxis();
+  scheduleSave();
+  setStatus(locked ? "全部上锁。已贴好的画面不会被盖掉。" : "全部解锁。可以继续贴画面。");
+}
+
+function lineNo(id) {
+  return project.lines.findIndex((item) => item.id === id) + 1;
+}
+
+function syncAttach() {
+  const line = project && project.lines.find((item) => item.id === selectedLine);
+  const index = line ? lineNo(line.id) : 0;
+  const label = !line ? "贴到选中的一段" : line.locked ? `第 ${pad(index)} 段已上锁` : `贴到第 ${pad(index)} 段`;
+  for (const id of ["attach", "fs-attach"]) {
+    $(id).textContent = label;
+    $(id).disabled = !line || line.locked;
+  }
+  const empty = !project || !project.lines.length;
+  $("lock-all").disabled = empty;
+  $("unlock-all").disabled = empty;
 }
 
 function onKey(event) {
@@ -400,6 +460,13 @@ function onDragStart(event) {
   if (event.target.closest("textarea, input, button, label")) {
     event.preventDefault();
     return;
+  }
+  if (event.currentTarget.id === "script" && project) {
+    const line = project.lines.find((item) => item.id === row.dataset.id);
+    if (line && line.locked) {
+      event.preventDefault();
+      return;
+    }
   }
   event.dataTransfer.setData("text/plain", `${event.currentTarget.id}:${row.dataset.id}`);
   event.dataTransfer.effectAllowed = "move";
@@ -424,6 +491,7 @@ function onDrop(event) {
   const [listId, sourceId] = (event.dataTransfer.getData("text/plain") || "").split(":");
   if (listId !== event.currentTarget.id) return;
   const list = listId === "episodes" ? project.episodes : project.lines;
+  if (listId === "script" && list.find((item) => item.id === sourceId && item.locked)) return;
   const from = list.findIndex((item) => item.id === sourceId);
   const to = list.findIndex((item) => item.id === row.dataset.id);
   if (from < 0 || to < 0 || from === to) return;

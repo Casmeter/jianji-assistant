@@ -56,6 +56,12 @@ button.primary {
 
 button.primary:hover { background: var(--cobalt-deep); }
 
+button.primary:disabled,
+button.primary:disabled:hover {
+  background: var(--cobalt);
+  border-color: var(--cobalt);
+}
+
 kbd {
   font-family: var(--mono);
   font-size: 11px;
@@ -182,9 +188,11 @@ kbd {
 }
 
 .axis-block.selected {
-  outline: 2px solid var(--ink);
-  outline-offset: -3px;
+  outline: 3px solid var(--ink);
+  outline-offset: -4px;
 }
+
+.axis-block.locked { opacity: 0.55; }
 
 .axis-note {
   grid-column: 2;
@@ -379,7 +387,44 @@ kbd {
   cursor: grab;
 }
 
-.row.selected { border-color: var(--cobalt); }
+.col-script .row { grid-template-columns: 42px 32px 1fr; }
+
+.row.selected {
+  border-color: transparent;
+  background: #e4ebff;
+  box-shadow: inset 5px 0 0 var(--cobalt);
+}
+
+.row.locked {
+  background: #f3f6f9;
+  cursor: default;
+}
+
+.row.selected.locked { box-shadow: inset 5px 0 0 #8ea0c4; }
+
+.lock {
+  width: 32px;
+  height: 32px;
+  align-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.lock[aria-pressed="true"] { background: #e7edf3; }
+
+.paste-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  background: var(--cobalt);
+  color: #fff;
+  font-family: var(--body);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
 
 .row.drag { border-color: var(--cobalt); background: #eef2ff; }
 

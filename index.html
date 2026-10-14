@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="快速切片小工具" />
   <title>剪辑助手席</title>
-  <link rel="stylesheet" href="app.css?v=3" />
+  <link rel="stylesheet" href="app.css?v=4" />
 </head>
 <body>
   <div class="app">
@@ -73,7 +73,11 @@
         <section class="col col-script" id="col-script" aria-labelledby="script-title">
           <div class="col-head">
             <h2 id="script-title">口播 / 切片</h2>
-            <span id="line-count" class="count">0</span>
+            <span class="head-tools">
+              <button type="button" id="lock-all">全部上锁</button>
+              <button type="button" id="unlock-all">全部解锁</button>
+              <span id="line-count" class="count">0</span>
+            </span>
           </div>
           <div class="sub-export">
             <label><input id="want-srt" type="checkbox" /> SRT</label>
@@ -132,6 +136,6 @@
   </div>
   <input id="dir-input" type="file" webkitdirectory multiple hidden />
   <input id="file-input" type="file" accept=".mp4,.mov,.mkv,.webm,.avi,.m4v,video/*" multiple hidden />
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
